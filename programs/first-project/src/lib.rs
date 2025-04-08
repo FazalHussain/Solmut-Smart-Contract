@@ -1,10 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_lang::solana_program::pubkey;
-use anchor_spl::{
-    token_interface::{
-        self, Mint, TokenAccount, TokenInterface, TransferChecked
-    }
-};
+use anchor_spl::token_interface::{self, Mint, TokenAccount, TokenInterface, TransferChecked};
 
 declare_id!("Am3MaWBXAj7exW93rDzJvB2TqTzeLA2XQ9gUaPHKAAT3");
 
@@ -12,33 +7,30 @@ declare_id!("Am3MaWBXAj7exW93rDzJvB2TqTzeLA2XQ9gUaPHKAAT3");
 pub mod first_project {
     use super::*;
 
-    pub fn buy_slmt(ctx: Context<BuySLMT>, presale_lamports_before: u64, decimals: u8) -> Result<()> {
-        let sol_sent = ctx
-            .accounts
-            .presale
-            .lamports()
-            .saturating_sub(presale_lamports_before);
+    pub fn buy_slmt(ctx: Context<BuySLMT>, sol_sent: u64) -> Result<()> {
+        
 
+        msg!("Presale received {} lamports", sol_sent);
         require!(sol_sent > 0, PresaleError::InsufficientPayment);
 
-        let slmt_amount = sol_sent.checked_mul(20_000).ok_or(PresaleError::Overflow)?;
+        let slmt_amount = sol_sent
+            .checked_mul(10) // 10 = 10^1 (because SLMT has 1 decimal)
+            .ok_or(PresaleError::Overflow)?
+            .checked_div(1_900_000) // 0.0019 SOL in lamports
+            .ok_or(PresaleError::Overflow)?;
+        let decimals = ctx.accounts.mint.decimals;
 
-        let bump = ctx.bumps.vault_authority;
-        let signer_seeds: &[&[u8]] = &[b"vault", &[bump]];
-        let signer = &[signer_seeds];
-
-        // Create CPI context following the TransferChecked struct pattern [(1)](https://www.anchor-lang.com/docs/tokens/basics/transfer-tokens)
+        // Transfer SLMT from Phantom wallet to buyer
         let cpi_accounts = TransferChecked {
             mint: ctx.accounts.mint.to_account_info(),
-            from: ctx.accounts.vault_token_account.to_account_info(), 
+            from: ctx.accounts.sender_token_account.to_account_info(),
             to: ctx.accounts.user_token_account.to_account_info(),
-            authority: ctx.accounts.vault_authority.to_account_info(),
+            authority: ctx.accounts.sender.to_account_info(),
         };
 
         let cpi_program = ctx.accounts.token_program.to_account_info();
-        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer);
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
 
-        
         token_interface::transfer_checked(cpi_ctx, slmt_amount, decimals)?;
 
         Ok(())
@@ -48,30 +40,31 @@ pub mod first_project {
 #[derive(Accounts)]
 pub struct BuySLMT<'info> {
     #[account(mut)]
-    pub buyer: Signer<'info>,
+    pub sender: Signer<'info>, // Phantom wallet sending SLMT
+
+    #[account(mut)]
+    pub presale: SystemAccount<'info>, // Receives SOL
 
     #[account(
-        seeds = [b"vault"],
-        bump
+        mut,
+        owner = token_program.key(),
+        constraint = sender_token_account.owner == sender.key() @ PresaleError::InvalidVaultOwner
     )]
-    /// CHECK: PDA authority only
-    pub vault_authority: UncheckedAccount<'info>,
+    pub sender_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
 
-    /// CHECK: This account is safe because we trust the vault's token account authority.
+    #[account(
+        mut,
+        owner = token_program.key(),
+        constraint = user_token_account.owner == buyer.key() @ PresaleError::InvalidUserTokenAccount
+    )]
+    pub user_token_account: Box<InterfaceAccount<'info, TokenAccount>,
+
     #[account(mut)]
-    pub vault_token_account: UncheckedAccount<'info>,
+    pub buyer: SystemAccount<'info>, // Receives SLMT
 
-    /// CHECK: Using UncheckedAccount since we're only using it for transfer [(1)](https://www.anchor-lang.com/docs/tokens/basics/transfer-tokens)
-    #[account(mut)]
-    pub user_token_account: UncheckedAccount<'info>,
+    pub mint: Box<InterfaceAccount<'info, Mint>>,
 
-    /// CHECK: Using UncheckedAccount for mint since we only need decimals [(1)](https://www.anchor-lang.com/docs/tokens/basics/transfer-tokens)
-    pub mint: UncheckedAccount<'info>,
-    
     pub token_program: Interface<'info, TokenInterface>,
-
-    #[account(mut)]
-    pub presale: SystemAccount<'info>,
 }
 
 #[error_code]
@@ -81,4 +74,10 @@ pub enum PresaleError {
 
     #[msg("Overflow occurred during SLMT calculation.")]
     Overflow,
+
+    #[msg("Sender token account is not owned by sender.")]
+    InvalidVaultOwner,
+
+    #[msg("User token account is not owned by the buyer.")]
+    InvalidUserTokenAccount,
 }

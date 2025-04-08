@@ -12,7 +12,7 @@ first_project = "Am3MaWBXAj7exW93rDzJvB2TqTzeLA2XQ9gUaPHKAAT3"
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "localnet"
+cluster = "devnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]

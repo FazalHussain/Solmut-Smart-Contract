@@ -16,6 +16,11 @@ no-idl = []
 no-log-ix-name = []
 idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 
+[profile.release]
+opt-level = "z"           # Optimize for size
+lto = "fat"              # Enable Link Time Optimization
+codegen-units = 1        # Use a single codegen unit for better optimization
+
 
 [dependencies]
 anchor-lang = "0.31.0"
